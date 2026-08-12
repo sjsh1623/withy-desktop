@@ -1,0 +1,99 @@
+appId: today.mohe.withy.desktop
+productName: Withy
+copyright: Copyright © 2026 Andrew Studio
+
+directories:
+  output: release
+  buildResources: build
+
+# The shell is tiny — main/preload/menu + the offline page. The UI itself is
+# the deployed SPA (see src/config.js), so there is no renderer bundle here.
+files:
+  - src/**/*
+  - package.json
+  - "!**/*.map"
+
+# withy://join?code=… — invite links and OAuth returns land back in the app.
+protocols:
+  - name: Withy
+    schemes:
+      - withy
+
+publish:
+  provider: github
+  owner: sjsh1623
+  repo: withy-desktop
+  releaseType: release
+
+mac:
+  category: public.app-category.finance
+  icon: build/icon.png
+  # Both Apple Silicon and Intel. dmg is the download people expect; zip is
+  # what electron-updater consumes for delta-free auto-update.
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  # Ad-hoc signature ("-") is the FLOOR, not a nicety: Apple Silicon refuses to
+  # exec an arm64 binary with no valid signature, and electron-builder leaves
+  # the upstream Electron signature broken once it rewrites the bundle. Without
+  # this the .app dies instantly with "손상되었으므로 열 수 없습니다".
+  #
+  # CI overrides this with a real Developer ID when the signing secrets exist —
+  # see .github/workflows/desktop-release.yml. Ad-hoc still means Gatekeeper
+  # quarantines the download; the README documents the one-line fix.
+  identity: "-"
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    # No camera/mic/location use — but the SPA can attach receipt images, and
+    # macOS wants a string before it will show the file picker prompt.
+    NSHumanReadableCopyright: Copyright © 2026 Andrew Studio
+    LSMinimumSystemVersion: "11.0"
+
+dmg:
+  artifactName: Withy-${version}-mac-${arch}.${ext}
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  artifactName: Withy-Setup-${version}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Withy
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: Withy-${version}-portable.${ext}
+
+linux:
+  icon: build/icon.png
+  category: Office
+  target:
+    - AppImage

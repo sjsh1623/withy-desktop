@@ -1,0 +1,30 @@
+{
+  "name": "withy-desktop",
+  "productName": "Withy",
+  "version": "1.0.0",
+  "description": "Withy — 커플 가계부 · 캘린더 데스크탑 앱",
+  "author": {
+    "name": "Andrew Studio",
+    "email": "sjsh1623@gmail.com"
+  },
+  "homepage": "https://mohe.today/withy/",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "WITHY_URL=http://localhost:5173/withy/home electron .",
+    "pack": "electron-builder --dir",
+    "build:mac": "electron-builder --mac --arm64 --x64 --publish never",
+    "build:mac:arm64": "electron-builder --mac --arm64 --publish never",
+    "build:win": "electron-builder --win --x64 --publish never",
+    "release": "electron-builder --mac --arm64 --x64 --publish always"
+  },
+  "devDependencies": {
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  }
+}

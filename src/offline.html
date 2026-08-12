@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Withy</title>
+<style>
+  :root{
+    --bg:#F4F6F8; --s1:#FFFFFF; --s2:#F2F4F6; --line:#E5E8EB;
+    --t1:#191F28; --t2:#4E5968; --t3:#8B95A1;
+    --lime:#05A66B; --lime-deep:#048256;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0F1216; --s1:#181C21; --s2:#22272E; --line:#2A3038;
+      --t1:#EEF1F4; --t2:#A7B0BC; --t3:#79838F;
+      --lime:#12BE7E; --lime-deep:#0E9E68;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--t1);
+    font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Segoe UI","Noto Sans KR",system-ui,sans-serif;
+    display:grid; place-items:center; padding:32px; -webkit-font-smoothing:antialiased;
+  }
+  .card{
+    width:100%; max-width:420px; background:var(--s1); border-radius:18px; padding:26px 24px;
+    box-shadow:0 1px 2px rgba(25,31,40,.04), 0 8px 24px rgba(25,31,40,.08); text-align:center;
+  }
+  .mark{
+    width:52px; height:52px; margin:0 auto 16px; border-radius:16px;
+    background:linear-gradient(140deg,var(--lime),var(--lime-deep));
+    display:grid; place-items:center;
+  }
+  .mark svg{width:24px;height:24px;fill:#fff}
+  h1{margin:0; font-size:19px; font-weight:800; letter-spacing:-.03em}
+  p{margin:10px 0 0; font-size:14px; line-height:1.65; color:var(--t2)}
+  button{
+    margin-top:20px; width:100%; height:46px; border:0; border-radius:13px; cursor:pointer;
+    background:var(--lime); color:#fff; font:inherit; font-size:15px; font-weight:700;
+  }
+  button:disabled{opacity:.55; cursor:default}
+  button:focus-visible{outline:2px solid var(--lime-deep); outline-offset:2px}
+  .detail{
+    margin-top:16px; font-size:11.5px; color:var(--t3); word-break:break-all;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  .retrying{margin-top:12px; font-size:12px; color:var(--t3)}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 512 512"><path d="M47.6 300.4L228.3 469.1c7.5 7 17.4 10.9 27.7 10.9s20.2-3.9 27.7-10.9L464.4 300.4c30.4-28.3 47.6-68 47.6-109.5v-5.8c0-69.9-50.5-129.5-119.4-141C347 36.5 300.6 51.4 268 84L256 96 244 84c-32.6-32.6-79-47.5-124.6-39.9C50.5 55.6 0 115.2 0 185.1v5.8c0 41.5 17.2 81.2 47.6 109.5z"/></svg>
+    </div>
+    <h1 id="title">서버에 연결하지 못했어요</h1>
+    <p id="body">인터넷 연결을 확인한 뒤 다시 시도해 주세요. 연결이 돌아오면 자동으로 다시 열립니다.</p>
+    <button id="retry" type="button">다시 시도</button>
+    <div class="retrying" id="status"></div>
+    <div class="detail" id="detail"></div>
+  </div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var code = params.get('code') || '';
+  var desc = params.get('desc') || '';
+  var target = params.get('url') || '';
+
+  // Only ever navigate back to an https URL we were actually asked to load.
+  var HOME = 'https://mohe.today/withy/home';
+  var destination = /^https?:\/\//i.test(target) ? target : HOME;
+
+  if (code === 'crash') {
+    document.getElementById('title').textContent = '화면이 예기치 않게 종료됐어요';
+    document.getElementById('body').textContent = '다시 시도를 누르면 앱을 새로 엽니다. 계속 반복되면 문의를 남겨주세요.';
+  }
+
+  document.getElementById('detail').textContent = [code && ('code ' + code), desc].filter(Boolean).join(' · ');
+
+  var btn = document.getElementById('retry');
+  var status = document.getElementById('status');
+  var attempts = 0;
+
+  function go() {
+    btn.disabled = true;
+    status.textContent = '다시 여는 중…';
+    location.replace(destination);
+  }
+
+  btn.addEventListener('click', go);
+
+  // Auto-retry with a slow backoff so a brief blip heals itself without the
+  // user touching anything, but a long outage doesn't hammer the server.
+  function tick() {
+    attempts += 1;
+    if (navigator.onLine) { go(); return; }
+    var wait = Math.min(30, 5 * attempts);
+    status.textContent = '연결을 기다리는 중… (' + wait + '초 후 재시도)';
+    setTimeout(tick, wait * 1000);
+  }
+  setTimeout(tick, 5000);
+  window.addEventListener('online', go);
+})();
+</script>
+</body>
+</html>
