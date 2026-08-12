@@ -50,6 +50,11 @@ Withy의 Electron 셸. macOS(arm64 + x64) · Windows(x64).
   `sandbox: true` 가 기본값이고, 원격 페이지를 띄우는 셸이라 특히 그렇습니다.
 - **네비게이션 화이트리스트**(`config.js: ALLOWED_HOSTS`)를 넓히지 마세요. 목록 밖 URL은
   시스템 브라우저로 나갑니다 — 주소창 없는 창에 외부 사이트를 가두면 피싱 표면이 됩니다.
+- **로그인 팝업은 예외로 앱 안에서 열려야 합니다**(`config.js: OAUTH_POPUP_HOSTS`). Google
+  Identity Services와 Apple의 appleid.js는 `window.open` 으로 동의 화면을 띄우고 결과를
+  `window.opener` 로 되돌려받습니다. 1.0.1은 이걸 시스템 브라우저로 내보내서 **로그인은
+  성공하는데 앱이 결과를 못 받는** 상태였습니다. 이 목록도 좁게 유지하세요 — 팝업은 주소창이
+  없어서 넓히면 그대로 피싱 표면이 됩니다.
 - **macOS는 Developer ID 서명 + Apple 공증이 둘 다 있어야 배포됩니다.** 1.0.0은 ad-hoc 서명만
   돼 있었고, 그건 Apple Silicon의 실행 요건만 만족시킬 뿐 Gatekeeper 격리는 그대로라 받는 사람
   Mac에서 "손상되었으므로 열 수 없습니다"로 아예 안 열렸습니다. CI는 서명 시크릿이 없으면

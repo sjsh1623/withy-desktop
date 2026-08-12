@@ -32,6 +32,35 @@ const ALLOWED_HOSTS = new Set([
   '127.0.0.1',
 ]);
 
+/**
+ * Sign-in popups that must open INSIDE the app, not in the system browser.
+ *
+ * The SPA signs in with JS SDKs that use `window.open` and hand the result
+ * back through `window.opener` (Google Identity Services, Apple's appleid.js).
+ * Routing those to the system browser — which is what the generic external-link
+ * rule did — breaks the flow completely: the user signs in successfully over
+ * there and the app never hears about it, because the opener relationship is
+ * gone. That is the "다른 브라우저에 뜨고 로그인해도 반응이 없음" report.
+ *
+ * These hosts are Google's and Apple's own sign-in origins. Keeping the list
+ * this narrow is the point — a popup is a window without an address bar, so
+ * anything broader is a phishing surface.
+ */
+const OAUTH_POPUP_HOSTS = new Set([
+  'accounts.google.com',
+  'accounts.youtube.com',
+  'appleid.apple.com',
+  'idmsa.apple.com',
+]);
+
+function isOAuthPopupUrl(rawUrl) {
+  try {
+    return OAUTH_POPUP_HOSTS.has(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** withy://join?code=... — invite deep links and OAuth returns. */
 const PROTOCOL = 'withy';
 
@@ -71,4 +100,4 @@ function deepLinkToPath(rawUrl) {
   }
 }
 
-module.exports = { APP_ORIGIN, APP_URL, ALLOWED_HOSTS, PROTOCOL, RELEASES_URL, isInternalUrl, deepLinkToPath };
+module.exports = { APP_ORIGIN, APP_URL, ALLOWED_HOSTS, OAUTH_POPUP_HOSTS, PROTOCOL, RELEASES_URL, isInternalUrl, isOAuthPopupUrl, deepLinkToPath };

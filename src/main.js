@@ -6,7 +6,7 @@ const {
 } = require('electron');
 const path = require('node:path');
 
-const { APP_URL, PROTOCOL, RELEASES_URL, isInternalUrl, deepLinkToPath } = require('./config');
+const { APP_URL, PROTOCOL, RELEASES_URL, isInternalUrl, isOAuthPopupUrl, deepLinkToPath } = require('./config');
 const windowState = require('./windowState');
 const { buildMenu } = require('./menu');
 
@@ -109,8 +109,26 @@ function urlForPath(routePath) {
 
 /** Navigation policy + failure handling shared by every window we own. */
 function wireWindow(win) {
-  // target=_blank / window.open → system browser, never a bare Electron window.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // Sign-in popups must stay in-process. Google Identity Services and
+    // Apple's appleid.js both `window.open` their consent screen and read the
+    // result back through `window.opener`; sending that to the system browser
+    // means the user signs in successfully somewhere the app can never hear
+    // from — the "다른 브라우저에 뜨고 로그인해도 반응 없음" failure. Allowing
+    // it returns a real child window with the opener relationship intact.
+    if (isOAuthPopupUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 700,
+          minimizable: false,
+          // No preload — our bridge has no business inside Google's or
+          // Apple's page, and this window isn't ours to extend.
+          webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+        },
+      };
+    }
     if (isInternalUrl(url)) {
       // Internal links that ask for a new window (invite share, admin detail)
       // stay inside the app — just navigate the window that asked.
@@ -121,11 +139,13 @@ function wireWindow(win) {
     return { action: 'deny' };
   });
 
-  // Full page navigations to a third-party host (OAuth consent, App Store,
-  // legal pages hosted elsewhere) go to the system browser. Without this an
-  // accidental link could strand the user on a page with no address bar.
+  // Full page navigations to a third-party host (App Store, legal pages hosted
+  // elsewhere) go to the system browser. Without this an accidental link could
+  // strand the user on a page with no address bar. OAuth hosts are exempt —
+  // a consent flow redirects between google/apple URLs several times before
+  // handing the result back to the opener.
   win.webContents.on('will-navigate', (event, url) => {
-    if (isInternalUrl(url)) return;
+    if (isInternalUrl(url) || isOAuthPopupUrl(url)) return;
     event.preventDefault();
     void shell.openExternal(url);
   });
