@@ -95,6 +95,10 @@ jobs:
       # Split per-OS so a macOS cert can never leak into a Windows build (or
       # vice versa) through a shared CSC_LINK fallback. All of these secrets
       # are optional — absent means "build unsigned/ad-hoc".
+      # A missing secret arrives as an EMPTY STRING, not as an absent variable,
+      # and electron-builder treats a *defined* CSC_LINK as a certificate path —
+      # so it resolved "" to the workspace dir and died with "not a file".
+      # Unset the empties before building; absent is what "no signing" means.
       - name: Build (macOS)
         if: runner.os == 'macOS'
         shell: bash
@@ -104,7 +108,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder ${{ matrix.args }} $EB_EXTRA --publish never
+        run: |
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
+          npx electron-builder ${{ matrix.args }} $EB_EXTRA --publish never
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -112,7 +120,11 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: npx electron-builder ${{ matrix.args }} --publish never
+        run: |
+          for v in CSC_LINK CSC_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
+          npx electron-builder ${{ matrix.args }} --publish never
 
       - name: Collect installers
         uses: actions/upload-artifact@v4
