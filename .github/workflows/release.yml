@@ -1,0 +1,171 @@
+name: release
+
+# Builds the Withy desktop client and publishes the installers as a GitHub
+# Release you can download from this repo's Releases tab.
+#
+# Trigger:
+#   git tag v1.0.0 && git push origin v1.0.0
+#   …or run it manually from the Actions tab with a version input.
+#
+# This repo holds only the Electron shell. The UI it displays lives in the
+# `tossa` repo (web/) and ships through that repo's own deploy pipeline — a
+# release here never needs a web deploy, and a web deploy never needs a
+# release here. See CLAUDE.md.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '릴리스 버전 (예: 1.0.1). 비우면 package.json 값을 씁니다.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One macOS job covers both slices — Apple Silicon and Intel.
+          - os: macos-latest
+            label: macOS (arm64 + x64)
+            args: --mac --arm64 --x64
+          - os: windows-latest
+            label: Windows (x64)
+            args: --win --x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          # Tag `v1.2.3` → 1.2.3. Manual runs can pass a version input.
+          # Keeping package.json in sync matters: electron-builder stamps the
+          # artifact filenames and the updater feed from it, so a drifting
+          # version silently ships installers that never see each other.
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+          fi
+          echo "Building Withy desktop $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Install
+        run: npm ci
+
+      - name: Resolve macOS signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MAC_IDENTITY: ${{ secrets.MAC_IDENTITY }}
+        run: |
+          # No Developer ID wired up → electron-builder.yml's `identity: "-"`
+          # ad-hoc signs, which is the minimum Apple Silicon needs to exec the
+          # binary at all. Add the MAC_IDENTITY / MAC_CSC_LINK secrets later and
+          # this switches to a real signature + notarization with no code change.
+          if [ -n "$MAC_IDENTITY" ]; then
+            echo "EB_EXTRA=-c.mac.identity=$MAC_IDENTITY -c.mac.notarize=true" >> "$GITHUB_ENV"
+            echo "Signing with Developer ID."
+          else
+            echo "EB_EXTRA=" >> "$GITHUB_ENV"
+            echo "::warning::No MAC_IDENTITY secret — shipping an ad-hoc signed build. Users must clear the quarantine flag once (see README.md)."
+          fi
+
+      # Split per-OS so a macOS cert can never leak into a Windows build (or
+      # vice versa) through a shared CSC_LINK fallback. All of these secrets
+      # are optional — absent means "build unsigned/ad-hoc".
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder ${{ matrix.args }} $EB_EXTRA --publish never
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Collect installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: withy-desktop-${{ runner.os }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          # Manual runs have no tag to attach to — fall back to a versioned one.
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v0.0.{0}', github.run_number) }}
+          name: Withy Desktop ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.run_number }}
+          draft: false
+          prerelease: false
+          files: dist/*
+          body: |
+            ## 내려받기
+
+            | 기기 | 파일 |
+            |---|---|
+            | Mac (Apple Silicon — M1 이상) | `Withy-<버전>-mac-arm64.dmg` |
+            | Mac (Intel) | `Withy-<버전>-mac-x64.dmg` |
+            | Windows 10/11 (설치형) | `Withy-Setup-<버전>.exe` |
+            | Windows (설치 없이 실행) | `Withy-<버전>-portable.exe` |
+
+            ### macOS 첫 실행
+            아직 Apple 공증(notarization)을 붙이지 않아 처음 열 때 "손상되었습니다" 경고가 뜹니다.
+            앱을 `/Applications` 로 옮긴 뒤 터미널에서 한 번만 실행하세요.
+
+            ```
+            xattr -dr com.apple.quarantine /Applications/Withy.app
+            ```
+
+            ### Windows 첫 실행
+            SmartScreen이 "알 수 없는 게시자"라고 막으면 **추가 정보 → 실행**을 누르세요.
