@@ -5,8 +5,10 @@ const {
   globalShortcut, nativeImage, dialog,
 } = require('electron');
 const path = require('node:path');
+const http = require('node:http');
+const crypto = require('node:crypto');
 
-const { APP_URL, PROTOCOL, RELEASES_URL, isInternalUrl, isOAuthPopupUrl, deepLinkToPath } = require('./config');
+const { APP_ORIGIN, APP_URL, PROTOCOL, RELEASES_URL, isInternalUrl, isOAuthPopupUrl, deepLinkToPath } = require('./config');
 const windowState = require('./windowState');
 const { buildMenu } = require('./menu');
 
@@ -339,6 +341,119 @@ ipcMain.handle('withy:info', () => ({
   appVersion: app.getVersion(),
   electron: process.versions.electron,
 }));
+
+// ── external (system browser) sign-in ──────────────────────────────────────
+//
+// Google increasingly answers sign-in with a passkey challenge, and Electron
+// cannot perform one: WebAuthn's platform authenticator needs Chromium wired
+// into macOS through a browser-only entitlement that a normal app doesn't get.
+// In-app the user reaches "Complete sign-in using your passkey" and stops.
+//
+// So we do what desktop apps do (RFC 8252): hand the flow to the real browser
+// and take the answer back on a loopback listener. The browser owns the
+// credential ceremony — passkeys, password managers, existing sessions all
+// work — and 127.0.0.1 is the recommended return channel because the port is
+// held by *this* process, so no other local app can claim it (unlike a custom
+// scheme, which anyone may register).
+//
+// The page the browser opens is our own /withy/login with `desktopAuth=<port>`;
+// it runs the same Google SDK it always has and hands the resulting ID token
+// back here. Nothing new is trusted server-side — the token's audience is the
+// same web client id the SPA already uses.
+
+/** @type {{ server: import('node:http').Server, timer: NodeJS.Timeout } | null} */
+let authListener = null;
+
+const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+
+function endExternalAuth() {
+  if (!authListener) return;
+  clearTimeout(authListener.timer);
+  try { authListener.server.close(); } catch { /* already closing */ }
+  authListener = null;
+}
+
+function authDonePage(ok) {
+  const title = ok ? '로그인됐어요' : '로그인하지 못했어요';
+  const body = ok ? 'Withy 앱으로 돌아가세요. 이 창은 닫아도 됩니다.'
+                  : '앱에서 다시 시도해 주세요. 이 창은 닫아도 됩니다.';
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>Withy</title><style>
+body{margin:0;height:100vh;display:grid;place-items:center;background:#F4F6F8;
+font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",system-ui,sans-serif;color:#191F28}
+.c{text-align:center;max-width:22rem;padding:24px}
+h1{font-size:19px;margin:0 0 8px;letter-spacing:-.02em}
+p{margin:0;font-size:14px;line-height:1.6;color:#4E5968}
+</style></head><body><div class="c"><h1>${title}</h1><p>${body}</p></div></body></html>`;
+}
+
+function beginExternalAuth(provider) {
+  endExternalAuth();
+
+  const state = crypto.randomUUID();
+  const server = http.createServer((req, res) => {
+    let ok = false;
+    let idToken = null;
+    try {
+      const u = new URL(req.url || '/', 'http://127.0.0.1');
+      // The state nonce is what stops an unrelated page from posting a token
+      // of its own choosing at the listener while it happens to be open.
+      if (u.searchParams.get('state') === state) {
+        idToken = u.searchParams.get('idToken');
+        ok = !!idToken;
+      }
+    } catch { /* malformed request — treated as failure below */ }
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(authDonePage(ok));
+
+    endExternalAuth();
+    const win = focusMain();
+    if (win) {
+      win.webContents.send('withy:auth-result', {
+        provider,
+        idToken: ok ? idToken : null,
+        error: ok ? null : 'no_token',
+      });
+    }
+  });
+
+  server.on('error', () => {
+    endExternalAuth();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('withy:auth-result', { provider, idToken: null, error: 'listen_failed' });
+    }
+  });
+
+  // Port 0 = let the OS pick a free one. Nothing is registered anywhere, so
+  // there is no fixed port to collide with or to be squatted before launch.
+  server.listen(0, '127.0.0.1', () => {
+    const { port } = server.address();
+    const url = new URL('/withy/login', APP_ORIGIN);
+    url.searchParams.set('desktopAuth', String(port));
+    url.searchParams.set('state', state);
+    url.searchParams.set('provider', provider);
+    void shell.openExternal(url.toString());
+  });
+
+  const timer = setTimeout(() => {
+    endExternalAuth();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('withy:auth-result', { provider, idToken: null, error: 'timeout' });
+    }
+  }, AUTH_TIMEOUT_MS);
+
+  authListener = { server, timer };
+}
+
+ipcMain.on('withy:begin-external-auth', (_event, provider) => {
+  const p = provider === 'apple' ? 'apple' : 'google';
+  beginExternalAuth(p);
+});
+
+ipcMain.on('withy:cancel-external-auth', () => endExternalAuth());
+
+app.on('will-quit', () => endExternalAuth());
 
 // ── auto update ────────────────────────────────────────────────────────────
 

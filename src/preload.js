@@ -63,6 +63,24 @@ contextBridge.exposeInMainWorld('withyDesktop', {
     ipcRenderer.send('withy:open-chat-window');
   },
 
+  /**
+   * Hand sign-in to the system browser and wait on a loopback listener.
+   * Electron can't perform a passkey challenge, so an in-app popup dead-ends
+   * on Google's "complete sign-in using your passkey" step — see main.js.
+   */
+  beginExternalAuth(provider) {
+    ipcRenderer.send('withy:begin-external-auth', provider === 'apple' ? 'apple' : 'google');
+  },
+
+  cancelExternalAuth() {
+    ipcRenderer.send('withy:cancel-external-auth');
+  },
+
+  /** `{ provider, idToken, error }` once the browser hands the token back. */
+  onAuthResult(handler) {
+    return subscribe('withy:auth-result', handler);
+  },
+
   /** `{ platform, arch, appVersion, electron }` */
   info() {
     return ipcRenderer.invoke('withy:info');

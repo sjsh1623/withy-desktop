@@ -50,7 +50,14 @@ Withy의 Electron 셸. macOS(arm64 + x64) · Windows(x64).
   `sandbox: true` 가 기본값이고, 원격 페이지를 띄우는 셸이라 특히 그렇습니다.
 - **네비게이션 화이트리스트**(`config.js: ALLOWED_HOSTS`)를 넓히지 마세요. 목록 밖 URL은
   시스템 브라우저로 나갑니다 — 주소창 없는 창에 외부 사이트를 가두면 피싱 표면이 됩니다.
-- **로그인 팝업은 예외로 앱 안에서 열려야 합니다**(`config.js: OAUTH_POPUP_HOSTS`). Google
+- **구글 로그인은 시스템 브라우저 + 루프백으로 갑니다**(`main.js: beginExternalAuth`). Electron은
+  패스키 챌린지를 수행할 수 없어서 — WebAuthn 플랫폼 인증기는 브라우저 전용 entitlement가
+  필요합니다 — 앱 내 팝업은 "complete sign-in using your passkey"에서 멈춥니다. 그래서 RFC 8252
+  방식으로 진짜 브라우저에 넘기고 `127.0.0.1` 임시 포트로 ID 토큰을 돌려받습니다. 커스텀 스킴이
+  아니라 루프백인 이유: 포트는 이 프로세스가 점유하므로 다른 앱이 가로챌 수 없습니다.
+  **state 논스 검증을 빼지 마세요** — 리스너가 열려 있는 동안 아무 페이지나 토큰을 던지는 걸
+  막는 유일한 장치입니다. 웹 쪽 짝은 `Login.tsx`의 `?desktopAuth=<port>&state=` 분기입니다.
+- **애플 로그인 팝업은 앱 안에서 열립니다**(`config.js: OAUTH_POPUP_HOSTS`). Google
   Identity Services와 Apple의 appleid.js는 `window.open` 으로 동의 화면을 띄우고 결과를
   `window.opener` 로 되돌려받습니다. 1.0.1은 이걸 시스템 브라우저로 내보내서 **로그인은
   성공하는데 앱이 결과를 못 받는** 상태였습니다. 이 목록도 좁게 유지하세요 — 팝업은 주소창이
