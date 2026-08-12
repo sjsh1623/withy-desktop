@@ -7,8 +7,13 @@ const {
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const https = require('node:https');
 
-const { APP_ORIGIN, APP_URL, PROTOCOL, RELEASES_URL, isInternalUrl, isOAuthPopupUrl, deepLinkToPath } = require('./config');
+const {
+  APP_URL, PROTOCOL, RELEASES_URL,
+  GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
+  isInternalUrl, isOAuthPopupUrl, deepLinkToPath,
+} = require('./config');
 const windowState = require('./windowState');
 const { buildMenu } = require('./menu');
 
@@ -387,35 +392,89 @@ p{margin:0;font-size:14px;line-height:1.6;color:#4E5968}
 </style></head><body><div class="c"><h1>${title}</h1><p>${body}</p></div></body></html>`;
 }
 
+function b64url(buf) {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Swaps the authorization code for tokens. PKCE stands in for a client secret. */
+function exchangeCode({ code, verifier, redirectUri }) {
+  const body = new URLSearchParams({
+    code,
+    client_id: GOOGLE_DESKTOP_CLIENT_ID,
+    code_verifier: verifier,
+    redirect_uri: redirectUri,
+    grant_type: 'authorization_code',
+  }).toString();
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(GOOGLE_TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, res => {
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(raw);
+          if (json.id_token) resolve(json.id_token);
+          else reject(new Error(json.error_description || json.error || 'no id_token'));
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+/**
+ * Google sign-in through the system browser (RFC 8252).
+ *
+ * Electron cannot perform a passkey ceremony — WebAuthn's platform
+ * authenticator needs Chromium wired into macOS through a browser-only
+ * entitlement — so an in-app popup dead-ends at "complete sign-in using your
+ * passkey". Every desktop app that supports Google sign-in solves this the
+ * same way: send the user to their real browser, listen on loopback for the
+ * redirect, exchange the code with PKCE.
+ *
+ * Loopback rather than a custom scheme because the port is held by *this*
+ * process — no other local app can claim it, whereas anyone may register
+ * `withy://`. `state` is checked to reject a redirect we didn't start.
+ */
 function beginExternalAuth(provider) {
   endExternalAuth();
 
-  const state = crypto.randomUUID();
+  const state = b64url(crypto.randomBytes(24));
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+
   const server = http.createServer((req, res) => {
-    let ok = false;
-    let idToken = null;
+    let code = null;
+    let failure = 'no_code';
     try {
       const u = new URL(req.url || '/', 'http://127.0.0.1');
-      // The state nonce is what stops an unrelated page from posting a token
-      // of its own choosing at the listener while it happens to be open.
-      if (u.searchParams.get('state') === state) {
-        idToken = u.searchParams.get('idToken');
-        ok = !!idToken;
-      }
-    } catch { /* malformed request — treated as failure below */ }
+      if (u.searchParams.get('state') !== state) failure = 'state_mismatch';
+      else if (u.searchParams.get('error')) failure = u.searchParams.get('error');
+      else code = u.searchParams.get('code');
+    } catch { /* malformed — falls through as a failure */ }
 
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(authDonePage(ok));
+    res.end(authDonePage(!!code));
 
+    const redirectUri = `http://127.0.0.1:${server.address().port}`;
     endExternalAuth();
-    const win = focusMain();
-    if (win) {
-      win.webContents.send('withy:auth-result', {
-        provider,
-        idToken: ok ? idToken : null,
-        error: ok ? null : 'no_token',
-      });
-    }
+
+    const deliver = (idToken, error) => {
+      const win = focusMain();
+      if (win) win.webContents.send('withy:auth-result', { provider, idToken: idToken || null, error: error || null });
+    };
+
+    if (!code) { deliver(null, failure); return; }
+    exchangeCode({ code, verifier, redirectUri })
+      .then(idToken => deliver(idToken, null))
+      .catch(err => deliver(null, err?.message || 'exchange_failed'));
   });
 
   server.on('error', () => {
@@ -425,14 +484,18 @@ function beginExternalAuth(provider) {
     }
   });
 
-  // Port 0 = let the OS pick a free one. Nothing is registered anywhere, so
-  // there is no fixed port to collide with or to be squatted before launch.
+  // Port 0 = the OS picks a free one. Google allows any port on the loopback
+  // address for installed-app clients, so nothing needs pre-registering.
   server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
-    const url = new URL('/withy/login', APP_ORIGIN);
-    url.searchParams.set('desktopAuth', String(port));
+    const url = new URL(GOOGLE_AUTH_ENDPOINT);
+    url.searchParams.set('client_id', GOOGLE_DESKTOP_CLIENT_ID);
+    url.searchParams.set('redirect_uri', `http://127.0.0.1:${port}`);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'openid email profile');
     url.searchParams.set('state', state);
-    url.searchParams.set('provider', provider);
+    url.searchParams.set('code_challenge', challenge);
+    url.searchParams.set('code_challenge_method', 'S256');
     void shell.openExternal(url.toString());
   });
 
@@ -447,8 +510,7 @@ function beginExternalAuth(provider) {
 }
 
 ipcMain.on('withy:begin-external-auth', (_event, provider) => {
-  const p = provider === 'apple' ? 'apple' : 'google';
-  beginExternalAuth(p);
+  beginExternalAuth(provider === 'apple' ? 'apple' : 'google');
 });
 
 ipcMain.on('withy:cancel-external-auth', () => endExternalAuth());

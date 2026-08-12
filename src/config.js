@@ -61,6 +61,17 @@ function isOAuthPopupUrl(rawUrl) {
   }
 }
 
+/**
+ * Google "Desktop app" OAuth client. Not a secret in any meaningful sense —
+ * Google issues installed-app clients precisely because a desktop binary
+ * cannot keep one, which is why the flow is PKCE-protected instead.
+ * The server accepts tokens minted under this id via GOOGLE_DESKTOP_CLIENT_ID.
+ */
+const GOOGLE_DESKTOP_CLIENT_ID =
+  '547448970696-t3ohafpg5t1mbv6vqd29bq51t2b2b8qf.apps.googleusercontent.com';
+const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+
 /** withy://join?code=... — invite deep links and OAuth returns. */
 const PROTOCOL = 'withy';
 
@@ -100,4 +111,8 @@ function deepLinkToPath(rawUrl) {
   }
 }
 
-module.exports = { APP_ORIGIN, APP_URL, ALLOWED_HOSTS, OAUTH_POPUP_HOSTS, PROTOCOL, RELEASES_URL, isInternalUrl, isOAuthPopupUrl, deepLinkToPath };
+module.exports = {
+  APP_ORIGIN, APP_URL, ALLOWED_HOSTS, OAUTH_POPUP_HOSTS, PROTOCOL, RELEASES_URL,
+  GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
+  isInternalUrl, isOAuthPopupUrl, deepLinkToPath,
+};
