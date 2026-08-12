@@ -74,45 +74,38 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Resolve macOS signing
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          MAC_IDENTITY: ${{ secrets.MAC_IDENTITY }}
-        run: |
-          # No Developer ID wired up → electron-builder.yml's `identity: "-"`
-          # ad-hoc signs, which is the minimum Apple Silicon needs to exec the
-          # binary at all. Add the MAC_IDENTITY / MAC_CSC_LINK secrets later and
-          # this switches to a real signature + notarization with no code change.
-          if [ -n "$MAC_IDENTITY" ]; then
-            echo "EB_EXTRA=-c.mac.identity=$MAC_IDENTITY -c.mac.notarize=true" >> "$GITHUB_ENV"
-            echo "Signing with Developer ID."
-          else
-            echo "EB_EXTRA=" >> "$GITHUB_ENV"
-            echo "::warning::No MAC_IDENTITY secret — shipping an ad-hoc signed build. Users must clear the quarantine flag once (see README.md)."
-          fi
-
-      # Split per-OS so a macOS cert can never leak into a Windows build (or
-      # vice versa) through a shared CSC_LINK fallback. All of these secrets
-      # are optional — absent means "build unsigned/ad-hoc".
-      # A missing secret arrives as an EMPTY STRING, not as an absent variable,
-      # and electron-builder treats a *defined* CSC_LINK as a certificate path —
-      # so it resolved "" to the workspace dir and died with "not a file".
-      # Unset the empties before building; absent is what "no signing" means.
+      # Signed with the Developer ID cert (MAC_CSC_LINK) and notarized through
+      # the App Store Connect API key. Both are mandatory: 1.0.0 shipped merely
+      # ad-hoc signed, which satisfies Apple Silicon's exec requirement but is
+      # still quarantined by Gatekeeper — the download simply would not open.
+      # Fail the build rather than publish an installer nobody can use.
+      #
+      # The .p8 is stored base64-encoded because GitHub secrets mangle
+      # multi-line values, and @electron/notarize wants a *path* — so it is
+      # written to the runner temp dir (wiped with the job), never to the
+      # workspace where upload-artifact could sweep it into a release.
       - name: Build (macOS)
         if: runner.os == 'macOS'
         shell: bash
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [ -z "${!v}" ]; then unset "$v"; fi
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is not set — the resulting app could not be installed on macOS. See README 서명."
+              exit 1
+            fi
           done
-          npx electron-builder ${{ matrix.args }} $EB_EXTRA --publish never
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          export APPLE_API_KEY="$KEY_PATH"
+          npx electron-builder ${{ matrix.args }} --publish never
+          rm -f "$KEY_PATH"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -171,13 +164,10 @@ jobs:
             | Windows 10/11 (설치형) | `Withy-Setup-<버전>.exe` |
             | Windows (설치 없이 실행) | `Withy-<버전>-portable.exe` |
 
-            ### macOS 첫 실행
-            아직 Apple 공증(notarization)을 붙이지 않아 처음 열 때 "손상되었습니다" 경고가 뜹니다.
-            앱을 `/Applications` 로 옮긴 뒤 터미널에서 한 번만 실행하세요.
-
-            ```
-            xattr -dr com.apple.quarantine /Applications/Withy.app
-            ```
+            ### macOS
+            Apple Developer ID로 서명하고 Apple 공증(notarization)까지 받았습니다.
+            받아서 `/Applications` 에 넣고 그냥 열면 됩니다 — 터미널 명령이 필요 없습니다.
 
             ### Windows 첫 실행
-            SmartScreen이 "알 수 없는 게시자"라고 막으면 **추가 정보 → 실행**을 누르세요.
+            코드 서명 인증서가 없어 SmartScreen이 "알 수 없는 게시자"로 막습니다.
+            **추가 정보 → 실행**을 누르세요.
