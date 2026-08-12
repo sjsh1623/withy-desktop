@@ -47,7 +47,19 @@ mac:
   # CI overrides this with a real Developer ID when the signing secrets exist —
   # see .github/workflows/desktop-release.yml. Ad-hoc still means Gatekeeper
   # quarantines the download; the README documents the one-line fix.
-  identity: "-"
+  #
+  # …which is exactly what 1.0.0 shipped, and why it wouldn't install: ad-hoc
+  # satisfies the arm64 exec requirement but Gatekeeper still quarantines the
+  # download. A real Developer ID signature + Apple notarization is the only
+  # combination that opens on someone else's Mac with no terminal command.
+  # The certificate reaches CI through MAC_CSC_LINK, notarization through the
+  # App Store Connect API key (APPLE_API_KEY*). Missing either one now fails
+  # the build loudly instead of quietly producing an uninstallable dmg —
+  # see README "서명 없이 빌드하기" for the local escape hatch.
+  # No "Developer ID Application:" prefix — electron-builder rejects it and
+  # picks the certificate type itself from the target.
+  identity: "Andrew Studio (B7JXA8GGC8)"
+  notarize: true
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
@@ -70,7 +82,10 @@ dmg:
       path: /Applications
 
 win:
-  icon: build/icon.png
+  # Separate art from macOS: Windows applies no mask, so the plate fills the
+  # canvas instead of sitting inside the Dock's 824/1024 safe area.
+  # Both files come from scripts/make-icons.py — don't hand-edit them.
+  icon: build/icon-win.png
   target:
     - target: nsis
       arch:

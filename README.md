@@ -16,15 +16,11 @@ Electron 셸이며 macOS(Apple Silicon · Intel)와 Windows를 지원합니다.
 
 ### macOS 첫 실행
 
-Apple 공증(notarization)을 아직 붙이지 않았습니다. 앱은 **ad-hoc 서명**되어 있어 실행 자체는
-되지만, 인터넷에서 받은 파일이라 Gatekeeper가 격리 플래그를 붙여 "손상되었으므로 열 수 없습니다"가
-뜹니다. `/Applications` 로 옮긴 뒤 한 번만:
+Apple Developer ID로 서명하고 Apple 공증(notarization)을 받았습니다.
+받아서 `/Applications` 에 넣고 그냥 열면 됩니다 — 터미널 명령이 필요 없습니다.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Withy.app
-```
-
-제대로 없애려면 Developer ID 인증서를 CI 시크릿에 넣으면 됩니다 — 아래 **서명** 참고.
+> 1.0.0은 ad-hoc 서명만 돼 있어서 Gatekeeper가 격리했고, "손상되었으므로 열 수 없습니다"로
+> 설치가 안 됐습니다. 1.0.1부터 해결됐습니다.
 
 ### Windows 첫 실행
 
@@ -94,21 +90,36 @@ GitHub Release에 붙입니다. Actions 탭에서 수동 실행(`workflow_dispat
 
 ## 서명
 
-기본값은 무료 경로입니다 — macOS ad-hoc, Windows 미서명.
+macOS는 **Developer ID 서명 + Apple 공증**이 필수입니다. 둘 중 하나라도 빠지면 다른 사람의
+Mac에서 열리지 않습니다 (1.0.0이 그랬습니다). CI는 시크릿이 없으면 **빌드를 실패시킵니다** —
+설치되지 않는 설치본을 조용히 릴리스하는 것보다 낫기 때문입니다.
 
-| 시크릿 | 효과 |
+| 시크릿 | 값 |
 |---|---|
-| `MAC_IDENTITY` | 있으면 Developer ID 서명 + 공증으로 전환 (예: `Developer ID Application: Andrew Studio (TEAMID)`) |
-| `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD` | base64 인코딩한 `.p12` 와 암호 |
-| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | 공증 자격증명 |
-| `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` | Windows 코드 서명 인증서 |
+| `MAC_CSC_LINK` | Developer ID Application `.p12` 를 base64로 인코딩한 문자열 |
+| `MAC_CSC_KEY_PASSWORD` | 그 `.p12` 의 암호 |
+| `APPLE_API_KEY_P8` | App Store Connect API 키 `.p8` 을 base64로 인코딩한 문자열 |
+| `APPLE_API_KEY_ID` | 키 ID (예: `YZVPSDU29B`) |
+| `APPLE_API_ISSUER` | Issuer ID (팀당 하나) |
+| `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` | Windows 코드 서명 인증서 — **선택**, 없으면 미서명 |
 
-셋 다 없어도 빌드는 통과합니다. 코드 변경 없이 시크릿만 추가하면 서명 경로로 넘어갑니다.
+인증서는 `Developer ID Application: Andrew Studio (B7JXA8GGC8)`, 2031-08-13 만료입니다.
+공증은 앱 암호 대신 **App Store Connect API 키**를 씁니다 — 2FA를 타지 않아 CI에 맞습니다.
 
-**`electron-builder.yml` 의 `mac.identity: "-"` 는 지우지 마세요.** Apple Silicon은 서명이 아예
-없는 arm64 바이너리를 실행조차 거부하는데, electron-builder는 번들을 수정하면서 상위(Electron)
-서명을 깨뜨립니다. ad-hoc 서명이 바닥값입니다. 같은 이유로 `build/entitlements.mac.plist` 의
-`com.apple.security.cs.disable-library-validation` 도 필요합니다 (hardened runtime + ad-hoc 조합).
+`electron-builder.yml` 의 `mac.identity` 에는 **`Developer ID Application:` 접두사를 붙이지
+마세요.** electron-builder가 거부하고, 인증서 종류는 타깃에서 알아서 고릅니다.
+`entitlements.mac.plist` 의 `com.apple.security.cs.disable-library-validation` 도 그대로 두세요
+(hardened runtime 조합에서 필요).
+
+### 서명 없이 빌드하기
+
+인증서 없는 기계에서 앱 구조만 확인하고 싶을 때:
+
+```bash
+npx electron-builder --mac --arm64 --dir -c.mac.identity=- -c.mac.notarize=false
+```
+
+이렇게 만든 앱은 **배포하면 안 됩니다** — 받는 사람 Mac에서 안 열립니다.
 
 ## 자동 업데이트
 
