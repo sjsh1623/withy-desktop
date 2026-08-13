@@ -398,7 +398,17 @@ font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sy
 .c{text-align:center;max-width:22rem;padding:24px}
 h1{font-size:19px;margin:0 0 8px;letter-spacing:-.02em}
 p{margin:0;font-size:14px;line-height:1.6;color:#4E5968}
-</style></head><body><div class="c"><h1>${title}</h1><p>${body}</p></div></body></html>`;
+</style></head><body><div class="c"><h1>${title}</h1><p>${body}</p></div>
+<script>
+  // Close the tab we borrowed. Browsers refuse window.close() on tabs a script
+  // didn't open, but a tab handed over by the OS and then only *redirected*
+  // (Google's authorize hops are 302s, which replace rather than push history)
+  // still qualifies — measured on Chrome, including through the redirect
+  // chain. If a browser declines, the message above is the fallback, so this
+  // degrades to exactly the previous behaviour.
+  setTimeout(function () { try { window.close(); } catch (e) {} }, 400);
+</script>
+</body></html>`;
 }
 
 function b64url(buf) {
