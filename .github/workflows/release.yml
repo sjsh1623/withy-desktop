@@ -74,6 +74,18 @@ jobs:
       - name: Install
         run: npm ci
 
+      # The Google desktop client id/secret are injected here rather than
+      # committed: an installed-app client must ship its secret inside the
+      # binary, but GitHub push protection (correctly) refuses to take one into
+      # a public repo's history. Without this step Google sign-in fails with
+      # "client_secret is missing".
+      - name: Write Google desktop credentials
+        shell: bash
+        env:
+          WITHY_GOOGLE_CLIENT_ID: ${{ secrets.WITHY_GOOGLE_CLIENT_ID }}
+          WITHY_GOOGLE_CLIENT_SECRET: ${{ secrets.WITHY_GOOGLE_CLIENT_SECRET }}
+        run: node scripts/write-google-secret.js
+
       # Signed with the Developer ID cert (MAC_CSC_LINK) and notarized through
       # the App Store Connect API key. Both are mandatory: 1.0.0 shipped merely
       # ad-hoc signed, which satisfies Apple Silicon's exec requirement but is
