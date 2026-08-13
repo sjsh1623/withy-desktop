@@ -11,7 +11,8 @@ const https = require('node:https');
 
 const {
   APP_URL, PROTOCOL, RELEASES_URL,
-  GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
+  GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_DESKTOP_CLIENT_SECRET,
+  GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
   isInternalUrl, isOAuthPopupUrl, isGoogleAuthUrl, deepLinkToPath,
 } = require('./config');
 const windowState = require('./windowState');
@@ -387,7 +388,7 @@ function endExternalAuth() {
 }
 
 function authDonePage(ok) {
-  const title = ok ? '로그인됐어요' : '로그인하지 못했어요';
+  const title = ok ? '확인됐어요' : '로그인하지 못했어요';
   const body = ok ? 'Withy 앱으로 돌아가세요. 이 창은 닫아도 됩니다.'
                   : '앱에서 다시 시도해 주세요. 이 창은 닫아도 됩니다.';
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -409,6 +410,7 @@ function exchangeCode({ code, verifier, redirectUri }) {
   const body = new URLSearchParams({
     code,
     client_id: GOOGLE_DESKTOP_CLIENT_ID,
+    client_secret: GOOGLE_DESKTOP_CLIENT_SECRET,
     code_verifier: verifier,
     redirect_uri: redirectUri,
     grant_type: 'authorization_code',
@@ -458,20 +460,39 @@ function beginExternalAuth(provider) {
   const verifier = b64url(crypto.randomBytes(32));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
 
+  // Captured at listen time. Reading `server.address()` inside the request
+  // handler crashed with "Cannot read properties of null": the browser fetches
+  // /favicon.ico right after rendering the return page, by which point we have
+  // already closed the listener and address() is null.
+  let port = 0;
+  let settled = false;
+
   const server = http.createServer((req, res) => {
+    let u = null;
+    try { u = new URL(req.url || '/', `http://127.0.0.1:${port}`); } catch { /* ignore */ }
+
+    // Only the redirect itself carries these. Anything else — favicon, a
+    // reload, a stray probe — must not be mistaken for the callback, and must
+    // not run once we've already answered.
+    const isCallback = !!u && (u.searchParams.has('code') || u.searchParams.has('error'));
+    if (settled || !isCallback) {
+      res.writeHead(204).end();
+      return;
+    }
+    settled = true;
+
     let code = null;
     let failure = 'no_code';
-    try {
-      const u = new URL(req.url || '/', 'http://127.0.0.1');
-      if (u.searchParams.get('state') !== state) failure = 'state_mismatch';
-      else if (u.searchParams.get('error')) failure = u.searchParams.get('error');
-      else code = u.searchParams.get('code');
-    } catch { /* malformed — falls through as a failure */ }
+    if (u.searchParams.get('state') !== state) failure = 'state_mismatch';
+    else if (u.searchParams.get('error')) failure = u.searchParams.get('error');
+    else code = u.searchParams.get('code');
 
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    // Deliberately does not claim success: the token exchange still has to
+    // happen, and the app is the one that knows whether it worked.
     res.end(authDonePage(!!code));
 
-    const redirectUri = `http://127.0.0.1:${server.address().port}`;
+    const redirectUri = `http://127.0.0.1:${port}`;
     endExternalAuth();
 
     const deliver = (idToken, error) => {
@@ -495,7 +516,7 @@ function beginExternalAuth(provider) {
   // Port 0 = the OS picks a free one. Google allows any port on the loopback
   // address for installed-app clients, so nothing needs pre-registering.
   server.listen(0, '127.0.0.1', () => {
-    const { port } = server.address();
+    port = server.address().port;
     const url = new URL(GOOGLE_AUTH_ENDPOINT);
     url.searchParams.set('client_id', GOOGLE_DESKTOP_CLIENT_ID);
     url.searchParams.set('redirect_uri', `http://127.0.0.1:${port}`);

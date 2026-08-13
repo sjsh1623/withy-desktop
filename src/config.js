@@ -78,13 +78,27 @@ function isOAuthPopupUrl(rawUrl) {
 }
 
 /**
- * Google "Desktop app" OAuth client. Not a secret in any meaningful sense —
- * Google issues installed-app clients precisely because a desktop binary
- * cannot keep one, which is why the flow is PKCE-protected instead.
- * The server accepts tokens minted under this id via GOOGLE_DESKTOP_CLIENT_ID.
+ * Google "Desktop app" OAuth credentials.
+ *
+ * An installed-app client cannot hide a secret — the binary ships it, and
+ * Google issues them knowing that, which is why PKCE carries the real
+ * protection. But "unavoidably present in the app" is not the same as "fine in
+ * a public git history", so the values are written at build time into
+ * `googleSecret.js` (gitignored) by `scripts/write-google-secret.js`: from an
+ * env var locally, from repository secrets in CI. GitHub push protection
+ * blocks the alternative, and it is right to.
+ *
+ * Missing file = Google sign-in reports a clear error rather than the app
+ * failing to boot.
  */
-const GOOGLE_DESKTOP_CLIENT_ID =
-  '547448970696-t3ohafpg5t1mbv6vqd29bq51t2b2b8qf.apps.googleusercontent.com';
+let googleCreds = { clientId: '', clientSecret: '' };
+try {
+  googleCreds = require('./googleSecret');
+} catch {
+  console.warn('[withy] src/googleSecret.js missing — run scripts/write-google-secret.js');
+}
+const GOOGLE_DESKTOP_CLIENT_ID = googleCreds.clientId;
+const GOOGLE_DESKTOP_CLIENT_SECRET = googleCreds.clientSecret;
 const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
@@ -129,6 +143,7 @@ function deepLinkToPath(rawUrl) {
 
 module.exports = {
   APP_ORIGIN, APP_URL, ALLOWED_HOSTS, OAUTH_POPUP_HOSTS, PROTOCOL, RELEASES_URL,
-  GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
+  GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_DESKTOP_CLIENT_SECRET,
+  GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
   isInternalUrl, isOAuthPopupUrl, isGoogleAuthUrl, deepLinkToPath,
 };
