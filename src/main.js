@@ -12,7 +12,7 @@ const https = require('node:https');
 const {
   APP_URL, PROTOCOL, RELEASES_URL,
   GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
-  isInternalUrl, isOAuthPopupUrl, deepLinkToPath,
+  isInternalUrl, isOAuthPopupUrl, isGoogleAuthUrl, deepLinkToPath,
 } = require('./config');
 const windowState = require('./windowState');
 const { buildMenu } = require('./menu');
@@ -117,6 +117,14 @@ function urlForPath(routePath) {
 /** Navigation policy + failure handling shared by every window we own. */
 function wireWindow(win) {
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // A Google sign-in popup can only dead-end in here: Electron cannot answer
+    // the passkey challenge Google now leads with. Whatever asked for it —
+    // an older web bundle, a fallback path — gets the system-browser flow
+    // instead, which is the only one that can actually finish.
+    if (isGoogleAuthUrl(url)) {
+      beginExternalAuth('google');
+      return { action: 'deny' };
+    }
     // Sign-in popups must stay in-process. Google Identity Services and
     // Apple's appleid.js both `window.open` their consent screen and read the
     // result back through `window.opener`; sending that to the system browser

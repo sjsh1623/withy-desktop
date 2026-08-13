@@ -47,11 +47,27 @@ const ALLOWED_HOSTS = new Set([
  * anything broader is a phishing surface.
  */
 const OAUTH_POPUP_HOSTS = new Set([
-  'accounts.google.com',
-  'accounts.youtube.com',
   'appleid.apple.com',
   'idmsa.apple.com',
 ]);
+
+/**
+ * Google is deliberately NOT in the list above. Its sign-in answers with a
+ * passkey challenge that Electron cannot perform, so an in-app popup stalls
+ * forever on "complete sign-in using your passkey" — the dead end 1.0.2/1.0.3
+ * shipped. Any attempt to open one is converted into the system-browser
+ * OAuth flow instead (see `beginExternalAuth` in main.js), which keeps working
+ * even when an older app binary meets a newer web bundle.
+ */
+const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'accounts.youtube.com']);
+
+function isGoogleAuthUrl(rawUrl) {
+  try {
+    return GOOGLE_AUTH_HOSTS.has(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
+}
 
 function isOAuthPopupUrl(rawUrl) {
   try {
@@ -114,5 +130,5 @@ function deepLinkToPath(rawUrl) {
 module.exports = {
   APP_ORIGIN, APP_URL, ALLOWED_HOSTS, OAUTH_POPUP_HOSTS, PROTOCOL, RELEASES_URL,
   GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT,
-  isInternalUrl, isOAuthPopupUrl, deepLinkToPath,
+  isInternalUrl, isOAuthPopupUrl, isGoogleAuthUrl, deepLinkToPath,
 };
